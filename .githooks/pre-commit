@@ -1,0 +1,18 @@
+#!/bin/bash
+
+git diff --cached --name-status | while read st file; do
+  if [ "$st" == 'D' ]; then continue; fi
+
+  # Lint js files
+  if [[ "${file:(-3)}" == ".js" ]] || [[ "${file:(-3)}" == ".ts" ]]; then
+    echo -en "[    ] Linting ${file}"
+    results=$(node node_modules/.bin/eslint --config eslint.config.js "${file}" 2>&1)
+    if [ "$?" -ne "0" ]; then
+      echo -en "\r[fail]\n"
+      printf "%s\n" "$results"
+      exit 1
+    fi
+    echo -en "\r[pass]\n"
+  fi
+
+done

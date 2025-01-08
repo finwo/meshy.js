@@ -21,10 +21,10 @@ API
 
 <details>
   <summary>.broadcast(message)</summary>
+  <p>Sends a message to all nodes in the network</p>
 
 ```typescript
 .broadcast(message:string)
 ```
 
-<p>Sends a message to all nodes in the network</p>
 </details>

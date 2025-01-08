@@ -8,5 +8,9 @@
   "keywords": [],
   "author": "",
   "license": "MIT",
-  "description": "Message router for sparsely connected mesh networks"
+  "description": "Message router for sparsely connected mesh networks",
+  "devDependencies": {
+    "eslint": "^9.17.0",
+    "eslint-plugin-editorconfig": "^4.0.3"
+  }
 }
