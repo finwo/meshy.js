@@ -1,4 +1,5 @@
 import { HexString, isHexString, randomHexString } from "./hexstring";
+import { crc16 } from './crc16-xmodem';
 
 type MeshyEventHandler = (chunk: string|Buffer) => any;
 
@@ -9,7 +10,10 @@ export type MeshyCompatibleConnection = {
 }
 
 const privateData = new WeakMap<object, {
-  connections: MeshyCompatibleConnection[],
+  connections: {
+    connection: MeshyCompatibleConnection,
+    identifier: HexString<64>,
+  }[],
 }>();
 
 export class Meshy {
@@ -31,6 +35,10 @@ export class Meshy {
 
   }
 
+  addConnection(connection: MeshyCompatibleConnection) {
+
+  }
+
 
 
 }
@@ -38,3 +46,9 @@ export class Meshy {
 export default Meshy;
 
 console.log(new Meshy());
+
+const msg = Buffer.from('\xDE\xAD\xBE\xEF\0\0', 'ascii');
+let   crc = crc16(msg);
+console.log({msg,crc});
+msg.writeUint16BE(crc,msg.length - 2);
+console.log({msg,crc:crc16(msg)});
