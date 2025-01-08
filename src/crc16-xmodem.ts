@@ -19,13 +19,13 @@ for(let i=0 ; i < 256 ; i++) {
 export function crc16(subject: Buffer): number {
   let result = init;
   for(let i = 0 ; i < subject.length ; i++) {
-    result  = (result << 8) + subject[i];
-    result ^= crcTable[result >> 16];
+    result  = ((result << 8) + subject[i]) ^ crcTable[result >> 8];
   }
   return result ^ xorout;
 }
 
 export function crc16b(subject: Buffer): Buffer {
-  const result = crc16(subject);
-  return Buffer.from([ result >> 8, result & 0xFF ]);
+  const result = Buffer.alloc(2);
+  result.writeUInt16BE(crc16(subject));
+  return result;
 }
