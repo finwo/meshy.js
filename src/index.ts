@@ -1,20 +1,7 @@
-// TODO: properly type this thing
-type HexString = string;
-
-function isHexString(subject: unknown, length?: number): subject is HexString {
-  if ('string' !== typeof subject) return false;
-  if ('number' === typeof length && subject.length !== length) return false;
-  return !subject.match(/[^0-9a-zA-Z]/);
-}
-
-function randomHexString(length = 64) {
-  let output = '';
-  while(output.length < length) output += Math.random().toString(16).slice(2);
-  return output.slice(0, length);
-}
+import { HexString, isHexString, randomHexString } from "./hexstring";
 
 export class Meshy {
-  identifier: HexString;
+  identifier: HexString<64>;
 
   constructor(nodeId?: string) {
 
@@ -24,7 +11,6 @@ export class Meshy {
     if (!isHexString(nodeId, 64)) {
       throw new TypeError(`nodeId must be a 32-byte hex string, ${typeof nodeId} given`);
     }
-
     this.identifier = nodeId;
   }
 
