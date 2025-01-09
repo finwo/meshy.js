@@ -40,7 +40,7 @@ export class MeshyPacketConnection extends EventEmitter<MeshyPacketConnectionEve
     });
 
     streamConnection.on('data', (chunk: string | Buffer) => {
-      ingressBuffer = Buffer.concat([ ingressBuffer, Buffer.from(chunk) ]).subarray(0, packetLimit);
+      ingressBuffer = Buffer.concat([ ingressBuffer, Buffer.from(chunk) ]).subarray(-packetLimit);
 
       // Search for a complete frame
       let frameEndIndex: number;
