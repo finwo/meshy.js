@@ -1,18 +1,12 @@
 import { HexString, isHexString, randomHexString } from "./hexstring";
 import { crc16 } from './crc16-xmodem';
-
-type MeshyEventHandler = (chunk: string|Buffer) => any;
-
-export type MeshyCompatibleConnection = {
-  on: (eventName: 'data' | 'close', handler: MeshyEventHandler) => any,
-  write: (chunk: string|Buffer) => any,
-  end: () => any,
-}
+import { MeshyStreamConnection } from './types';
+import {MeshyPacketConnection} from "./packetize";
 
 const privateData = new WeakMap<object, {
   connections: {
-    connection: MeshyCompatibleConnection,
-    identifier: HexString<64>,
+    connection: MeshyPacketConnection,
+    identifier?: HexString<64>,
   }[],
 }>();
 
@@ -35,8 +29,11 @@ export class Meshy {
 
   }
 
-  addConnection(connection: MeshyCompatibleConnection) {
-
+  addConnection(connection: MeshyStreamConnection) {
+    const ctx = privateData.get(this);
+    ctx.connections.push({
+      connection: new MeshyPacketConnection(connection),
+    });
   }
 
 
