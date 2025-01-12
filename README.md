@@ -24,7 +24,17 @@ API
   <p>Sends a message to all nodes in the network</p>
 
 ```typescript
-.broadcast(message:string)
+.broadcast(message:Buffer)
+```
+
+</details>
+
+<details>
+  <summary>.unicast(message, recipient)</summary>
+  <p>Sends a message to a single node</p>
+
+```typescript
+.unicast(message:Buffer, recipient:Buffer)
 ```
 
 </details>
