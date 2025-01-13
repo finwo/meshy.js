@@ -16,18 +16,14 @@ The stream/connection you pass to the library is assumed to be:
 This means the connection you pass to the library can range from a serial
 connection up to a tcp connection (or whatever's popular in the future).
 
+Routing:
+
+- connection-prefix code, 0 = this machine is the target
+- ethertype-ish codes for declaring protocol of packet
+- ARP-ish protocol for finding neighbours
+
 API
 ---
-
-<details>
-  <summary>.broadcast(message)</summary>
-  <p>Sends a message to all nodes in the network</p>
-
-```typescript
-.broadcast(message:Buffer)
-```
-
-</details>
 
 <details>
   <summary>.unicast(message, recipient)</summary>
