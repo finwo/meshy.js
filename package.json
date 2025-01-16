@@ -17,6 +17,6 @@
     "fast-glob": "^3.3.3"
   },
   "dependencies": {
-    "stream-packetize": "^2.0.4"
+    "stream-packetize": "^2.1.1"
   }
 }

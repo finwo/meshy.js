@@ -19,6 +19,15 @@ compatible with the internal use of the connection.
 The connection given is not assumed to be reliable, which protocols built on top
 of this should take in to account.
 
+Error handling
+--------------
+
+Because this is a network library (and because I like the pattern), non-fatal
+errors will be returned instead of thrown to prevent the program from crashing.
+
+This does mean that the user of this library needs to decide how to handle such
+errors.
+
 Packet structure
 ----------------
 
