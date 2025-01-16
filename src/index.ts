@@ -1,5 +1,9 @@
 import { PacketConnection, StreamConnection } from 'stream-packetize';
 
+type MeshyOptions = {
+  identifier: string;
+};
+
 // const privateData = new WeakMap<object, {
 //   connections: {
 //     connection: PacketConnection,
@@ -7,30 +11,28 @@ import { PacketConnection, StreamConnection } from 'stream-packetize';
 //   }[],
 // }>();
 
-export enum RoutingMode {
-  ADDRESS, // Static packets, nodes hold a routing table
-};
-
-export type MeshyOptions = {
-  routingMode: RoutingMode,
-};
-
 export class Meshy {
+  private opts: MeshyOptions;
+
   // identifier: Buffer;
 
   constructor(options?: Partial<MeshyOptions>) {
 
-    const opts: MeshyOptions = Object.assign({
-      routingMode: RoutingMode.ADDRESS,
-    }, options || {});
+    this.opts = Object.assign({
+      identifier: '',
+    }, options);
 
-    switch(opts.routingMode) {
-      case RoutingMode.ADDRESS:
-        // Supported
-        break;
-      default:
-        throw new Error(`Routing mode '${opts.routingMode}' not supported`);
-    }
+    // const opts: MeshyOptions = Object.assign({
+    //   routingMode: RoutingMode.ADDRESS,
+    // }, options || {});
+
+    // switch(opts.routingMode) {
+    //   case RoutingMode.ADDRESS:
+    //     // Supported
+    //     break;
+    //   default:
+    //     throw new Error(`Routing mode '${opts.routingMode}' not supported`);
+    // }
 
     // // Ensure we have a node id
     // if (!nodeId) {
@@ -60,22 +62,12 @@ export class Meshy {
 
   }
 
-  addConnection(connection: StreamConnection) {
+  addConnection(connection: StreamConnection | PacketConnection) {
     // const ctx = privateData.get(this);
     // ctx.connections.push({
     //   connection: new PacketConnection(connection),
     // });
   }
-
-  broadcast(message: Buffer) {
-
-  }
-
-  unicast(message: Buffer, recipient: Buffer) {
-
-  }
-
-
 
 }
 
