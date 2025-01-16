@@ -27,6 +27,12 @@ export class Meshy {
 
   }
 
+  // Note: targetpath is original, returnpath is already been prepended
+  private _handleMessage(message: { returnPath: Buffer, payload: Buffer }) {
+    const ctx = privateData.get(this);
+    // TODO: message is for us, do stuff
+  }
+
   /**
    * @param   {StreamConnection|PacketConnection} connection - The connection to manage using meshy
    * @returns {Error|false} False on success, an error upon failure
@@ -48,9 +54,39 @@ export class Meshy {
     // Reserve a unique port number
     // TODO: optimize?
     let port = 1;
-    while(ctx.connections.find(entry => entry.port == port)) {
+    while(ctx.connections.find(entry => entry.port === port)) {
       port++;
     }
+
+    // Handle incoming packets
+    connection.on('message', (message: string|Buffer) => {
+      if ('string' === typeof message) message = Buffer.from(message);
+
+      // Extract paths, pre-emptively prefix returnPath
+      const targetPath = message.subarray(0, message.indexOf(0) + 1);
+      const returnPath = Buffer.concat([Buffer.from([port]),message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1)]);
+      const payload    = message.subarray(targetPath.length + returnPath.length - 1);
+
+      // Handle messages for us, process the thing
+      if (targetPath[0] == 0) {
+        return this._handleMessage({ returnPath, payload });
+      }
+
+      // Forward packet if not for us
+      const neighbour = ctx.connections.find(entry => entry.port == targetPath[0]);
+      if (!neighbour) return; // Discard packet if target missing
+      neighbour.connection.send(Buffer.concat([
+        targetPath.subarray(1),
+        returnPath,
+        payload,
+      ]));
+    });
+
+    // Handle closures
+    // TODO: do anything special?
+    connection.on('close', () => {
+      ctx.connections = ctx.connections.filter(entry => entry.port !== port);
+    });
 
     // And actually store the thing
     ctx.connections.push({
