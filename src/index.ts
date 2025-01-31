@@ -28,7 +28,7 @@ export class Meshy {
   }
 
   // Note: targetpath is original, returnpath is already been prepended
-  private _handleMessage(message: { returnPath: Buffer, payload: Buffer }) {
+  private _handleMessage(message: { returnPath: Buffer, protocol: number, payload: Buffer }) {
     const ctx = privateData.get(this);
     // TODO: message is for us, do stuff
   }
@@ -69,7 +69,11 @@ export class Meshy {
 
       // Handle messages for us, process the thing
       if (targetPath[0] == 0) {
-        return this._handleMessage({ returnPath, payload });
+        return this._handleMessage({
+          returnPath,
+          protocol: payload.readUint16BE(0),
+          payload : payload.subarray(2)
+        });
       }
 
       // Forward packet if not for us
