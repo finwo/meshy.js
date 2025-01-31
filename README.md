@@ -65,14 +65,14 @@ that are specific to meshy.
 
 Here's a list of custom protocols we define outside of the ethertype set.
 
-+------+-----------------------------+
+| ---- | --------------------------- |
 | Hex  | Description                 |
-+------+-----------------------------+
+| ---- | --------------------------- |
 | 0000 | Reserved, do not use        |
 | 0100 | Meshy Discovery Protocol    |
 | 0800 | Internet Protocol version 4 |
 | FFFF | Reserved, do not use        |
-+------+-----------------------------+
+| ---- | --------------------------- |
 
 Meshy Discovery Protocol
 ------------------------
@@ -111,16 +111,16 @@ an expiry of 1 second might be more appropriate.
 Within the packet, after the protocol field, there is simply a list of 5-value
 records. These values are:
 
-+----------+--------------+--------------------------------------------------------------------------------------+
+| -------- | ------------ | ------------------------------------------------------------------------------------ |
 | Field    | Type         | Description                                                                          |
-+----------+--------------+--------------------------------------------------------------------------------------+
+| -------- | ------------ | ------------------------------------------------------------------------------------ |
 | Version  | uint16be     | 0x0001, Format version of the record                                                 |
 | Protocol | uint16be     | The protocol this service record applies to                                          |
 | Expiry   | uint64be     | When this record expires in milliseconds since the UNIX epoch (1970-01-01 00:00 UTC) |
 | Path     | &lt;path&gt; | Path towards the node that is hosting the service                                    |
 | Length   | uint16be     | Length of the name in bytes                                                          |
 | Name     | string       | Name of the service described in this record                                         |
-+----------+--------------+--------------------------------------------------------------------------------------+
+| -------- | ------------ | ------------------------------------------------------------------------------------ |
 
 Note that a version indicator of 0x0000 signals the end of the record list,
 regardless of whether there is more data within the packet.
@@ -178,9 +178,9 @@ the packet end OR an "end of lldpdu" record, whichever comes first.
 A TLV record consists of a 7-bit type indicator followed by a 9-bit length
 indicator. The registered types are as follows:
 
-+-------+-----------+---------------------+
+| ----- | --------- | ------------------- |
 | Type  | Usage     | Description         |
-+-------+-----------+---------------------+
+| ----- | --------- | ------------------- |
 | 0     | Optional  | End of LLDPU        |
 | 1     | Mandatory | Chassis ID          |
 | 2     | Mandatory | Port ID             |
@@ -192,6 +192,6 @@ indicator. The registered types are as follows:
 | 8     | Optional  | Management address  |
 | 9-126 | Reserved  |                     |
 | 127   | Custom    |                     |
-+-------+-----------+---------------------+
+| ----- | --------- | ------------------- |
 
 -->
