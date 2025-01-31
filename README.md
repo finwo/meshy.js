@@ -19,6 +19,9 @@ compatible with the internal use of the connection.
 The connection given is not assumed to be reliable, which protocols built on top
 of this should take in to account.
 
+While the packet routing of this library *may* scale far, as no routing tables
+are involved, the service discovery as defined **DOES NOT** hyperscale.
+
 Error handling
 --------------
 
@@ -149,10 +152,6 @@ forward it. In turn, that neighbour would send out that record as follows:
 00 04                   -- Address length = 4 bytes
 c0 a8 01 20             -- Address = 192.168.1.42
 ```
-
-
-
-
 
 <!--
 

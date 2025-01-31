@@ -4,10 +4,16 @@ type MeshyOptions = {
 
 };
 
+export type MeshyHandlerFn = (path:Buffer, port:number, payload:Buffer) => Promise<any>;
+
 const privateData = new WeakMap<object, {
   connections: {
     port      : number,
     connection: PacketConnection | WebSocket,
+  }[],
+  handlers: {
+    protocol: number,
+    fn      : MeshyHandlerFn,
   }[],
 }>();
 
@@ -23,14 +29,36 @@ export class Meshy {
     // Ensure a context for truly private data exists
     privateData.set(this, {
       connections: [],
+      handlers: [],
     });
 
   }
 
   // Note: targetpath is original, returnpath is already been prepended
-  private _handleMessage(message: { returnPath: Buffer, protocol: number, payload: Buffer }) {
+  private async _handleMessage(message: { returnPath: Buffer, port: number, protocol: number, payload: Buffer }) {
     const ctx = privateData.get(this);
     // TODO: message is for us, do stuff
+    const handlers = ctx.handlers.filter(entry => entry.protocol == message.protocol);
+    for(const handler of handlers) {
+      const done = !(await handler.fn(message.returnPath, message.port, message.payload));
+      if (done) break;
+    }
+    // If a message has no handler, we don't support it
+    // We don't care about unsupported messages, so we drop them silently
+  }
+
+  async sendMessage(port: number, path: Buffer, returnPath: Buffer, protocol: number, payload: Buffer): Promise<boolean> {
+    if (path[path.length - 1] !== 0) return false;
+    const ctx       = privateData.get(this);
+    const neighbour = ctx.connections.find(entry => entry.port == port);
+    if (!neighbour) return false;
+    neighbour.connection.send(Buffer.concat([
+      path,
+      returnPath,
+      Buffer.from([ (protocol >> 8) % 256, protocol % 256 ]),
+      payload,
+    ]));
+    return true;
   }
 
   /**
@@ -62,15 +90,16 @@ export class Meshy {
     connection.on('message', (message: string|Buffer) => {
       if ('string' === typeof message) message = Buffer.from(message);
 
-      // Extract paths, pre-emptively prefix returnPath
+      // Split paths and payload
       const targetPath = message.subarray(0, message.indexOf(0) + 1);
-      const returnPath = Buffer.concat([Buffer.from([port]),message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1)]);
-      const payload    = message.subarray(targetPath.length + returnPath.length - 1);
+      const returnPath = message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1);
+      const payload    = message.subarray(targetPath.length + returnPath.length);
 
       // Handle messages for us, process the thing
       if (targetPath[0] == 0) {
         return this._handleMessage({
           returnPath,
+          port,
           protocol: payload.readUint16BE(0),
           payload : payload.subarray(2)
         });
@@ -81,6 +110,7 @@ export class Meshy {
       if (!neighbour) return; // Discard packet if target missing
       neighbour.connection.send(Buffer.concat([
         targetPath.subarray(1),
+        Buffer.from([port]),
         returnPath,
         payload,
       ]));
