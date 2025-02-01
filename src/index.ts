@@ -4,11 +4,12 @@ type MeshyOptions = {
   mdpInterval: number,
 };
 
-export type MeshyHandlerFn = (path:Buffer, port:number, payload:Buffer) => Promise<any>;
+export type MeshyHandlerFn = (path:Buffer, payload:Buffer) => Promise<any>;
 
 const privateData = new WeakMap<object, {
   connections: {
     port      : number,
+    path      : Buffer,
     connection: PacketConnection | WebSocket,
   }[],
   handlers: {
@@ -16,7 +17,7 @@ const privateData = new WeakMap<object, {
     fn      : MeshyHandlerFn,
   }[],
   services: {
-    port    : number,
+    isSelf  : boolean,
     path    : Buffer,
     expires : bigint,
     protocol: number,
@@ -40,7 +41,6 @@ export class Meshy {
   private mdpInterval: NodeJS.Timeout;
 
   constructor(options?: Partial<MeshyOptions>) {
-
     // Mix in default options
     this.opts = Object.assign({
       mdpInterval: 1e3,
@@ -56,11 +56,10 @@ export class Meshy {
 
     // MDP sender + housekeeping
     this.mdpInterval = setInterval(() => {
-
       // Handle service expiry
       const now    = BigInt(Date.now());
       ctx.services = ctx.services.filter(service => {
-        if (service.port === 0) return true; // Self-declared
+        if (service.isSelf) return true;
         return service.expires >= now;
       });
 
@@ -68,16 +67,16 @@ export class Meshy {
       const path       = Buffer.from([0]);
       const returnPath = Buffer.from([0]);
       const protocol   = 0x0100;
+
       for(const service of ctx.services) {
-        const expires = service.port ? service.expires : now + service.expires;
-        if (expires < now) continue;
+        const expires = service.isSelf ? now + service.expires : service.expires;
         const record = Buffer.concat([
-          num_to_ui16be(1),                          // MDP version 1
-          num_to_ui16be(service.protocol),           // Service protocol
-          num_to_ui64be(expires),                    // Expiry timestamp
-          Buffer.from([service.port]), service.path, // Service path
-          num_to_ui16be(service.value.length),       // Value length
-          service.value,                             // Value itself
+          num_to_ui16be(1),                    // MDP version 1
+          num_to_ui16be(service.protocol),     // Service protocol
+          num_to_ui64be(expires),              // Expiry timestamp
+          service.path,                        // Service path
+          num_to_ui16be(service.value.length), // Value length
+          service.value,                       // Value itself
         ]);
         payload = Buffer.concat([
           payload,
@@ -87,8 +86,7 @@ export class Meshy {
       }
       for(const neighbour of ctx.connections) {
         this.sendMessage(
-          neighbour.port,
-          path,
+          Buffer.concat([Buffer.from([neighbour.port]),path]),
           returnPath,
           protocol,
           payload,
@@ -99,7 +97,7 @@ export class Meshy {
     // MDP receiver
     ctx.handlers.push({
       protocol: 0x0100,
-      fn: async (_: Buffer, port: number, payload: Buffer) => {
+      fn: async (returnPath: Buffer, payload: Buffer) => {
         while(payload.length) {
 
           // Shift the whole entry from the payload, so we can skip
@@ -117,9 +115,10 @@ export class Meshy {
           const protocol = entry.readUint16BE(0);
           const expires  = entry.readBigInt64BE(2);
           const path     = Buffer.concat([
+            returnPath.subarray(0, returnPath.length - 1),
             entry.subarray(10, entry.indexOf(0, 10) + 1)
           ]);
-          entry = entry.subarray(path.length + 10);
+          entry = entry.subarray(path.length - returnPath.length + 11);
           const valueLength = entry.readUint16BE(0);
           const value       = entry.subarray(2, 2 + valueLength);
 
@@ -135,7 +134,7 @@ export class Meshy {
 
           // Skip if we ourselves host the service
           // Reason: expires = duration, not timestamp
-          if (found && (found.port === 0)) continue;
+          if (found && found.isSelf) continue;
 
           if (found && (
             ((found.expires > expires) && (found.path.length  > path.length)) ||
@@ -144,11 +143,10 @@ export class Meshy {
             // Update if shorter path or newer record from same distance
             found.expires = expires;
             found.path    = path;
-            found.port    = port;
           } else if (!found) {
             // Or insert if new
             ctx.services.push({
-              port,
+              isSelf: false,
               path,
               expires,
               protocol,
@@ -163,20 +161,20 @@ export class Meshy {
   }
 
   // Note: targetpath is original, returnpath is already been prepended
-  private async _handleMessage(message: { returnPath: Buffer, port: number, protocol: number, payload: Buffer }) {
+  private async _handleMessage(message: { returnPath: Buffer, protocol: number, payload: Buffer }) {
     const ctx = privateData.get(this);
     // TODO: message is for us, do stuff
     const handlers = ctx.handlers.filter(entry => entry.protocol == message.protocol);
     for(const handler of handlers) {
       // return falsy = done, return truthy = pass to next handler
-      const done = !(await handler.fn(message.returnPath, message.port, message.payload));
+      const done = !(await handler.fn(message.returnPath, message.payload));
       if (done) break;
     }
     // If a message has no handler, we don't support it
     // We don't care about unsupported messages, so we drop them silently
   }
 
-  async routeInfo(protocol: number, service: Buffer) {
+  routeInfo(protocol: number, service: Buffer) {
     const ctx = privateData.get(this);
     const found = ctx.services.find(svc => {
       if (svc.protocol !== protocol) return false;
@@ -184,25 +182,28 @@ export class Meshy {
       return true;
     });
     if (!found) return false;
-    return {
-      port: found.port,
-      path: found.path,
-    };
+    return found.path;
   }
 
-  async sendMessage(port: number, path: Buffer, returnPath: Buffer, protocol: number, payload: Buffer): Promise<boolean> {
-    if (!port) { // Message to self
+  async sendMessage(path: Buffer, returnPath: Buffer, protocol: number, payload: Buffer): Promise<boolean> {
+    if (path[0] == 0) { // Message to self
       setImmediate(() => {
-        this._handleMessage({ returnPath, port, protocol, payload })
+        this._handleMessage({
+          returnPath: Buffer.from([0]),
+          protocol,
+          payload
+        });
       });
       return true;
     }
+    if (path.length < 2) return false;
     if (path[path.length - 1] !== 0) return false;
+    if (returnPath.length < 1) returnPath = Buffer.from([0]);
     const ctx       = privateData.get(this);
-    const neighbour = ctx.connections.find(entry => entry.port == port);
+    const neighbour = ctx.connections.find(entry => entry.port == path[0]);
     if (!neighbour) return false;
     neighbour.connection.send(Buffer.concat([
-      path,
+      path.subarray(1),
       returnPath,
       Buffer.from([ (protocol >> 8) % 256, protocol % 256 ]),
       payload,
@@ -214,8 +215,8 @@ export class Meshy {
   declareService(protocol: number, value: Buffer, expiry: bigint | number = 60e3) {
     const ctx  = privateData.get(this);
     ctx.services.push({
-      port    : 0,
-      path    : Buffer.alloc(0),
+      isSelf  : true,
+      path    : Buffer.from([0]),
       expires : BigInt(expiry),
       protocol: protocol,
       value   : value,
@@ -259,15 +260,18 @@ export class Meshy {
       if ('string' === typeof message) message = Buffer.from(message);
 
       // Split paths and payload
+      // !!! MODIFIES RETURN PATH !!!
       const targetPath = message.subarray(0, message.indexOf(0) + 1);
-      const returnPath = message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1);
-      const payload    = message.subarray(targetPath.length + returnPath.length);
+      const returnPath = Buffer.concat([
+        Buffer.from([port]),
+        message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1),
+      ]);
+      const payload = message.subarray(targetPath.length + returnPath.length - 1);
 
       // Handle messages for us, process the thing
       if (targetPath[0] == 0) {
         return this._handleMessage({
           returnPath,
-          port,
           protocol: payload.readUint16BE(0),
           payload : payload.subarray(2)
         });
@@ -278,7 +282,6 @@ export class Meshy {
       if (!neighbour) return; // Discard packet if target missing
       neighbour.connection.send(Buffer.concat([
         targetPath.subarray(1),
-        Buffer.from([port]),
         returnPath,
         payload,
       ]));
@@ -293,10 +296,19 @@ export class Meshy {
     // And actually store the thing
     ctx.connections.push({
       port,
+      path: Buffer.from([ port, 0 ]),
       connection,
     });
 
     return false;
+  }
+
+  shutdown() {
+    const ctx = privateData.get(this);
+    ctx.connections.forEach(neighbour => {
+      neighbour.connection.close();
+    });
+    clearInterval(this.mdpInterval);
   }
 
 }

@@ -1,6 +1,15 @@
 import mockConnection from './mockConnection';
 import Meshy from '../src';
 
+const assert = (expected, actual, message) => {
+  if (expected !== actual) throw new Error(`Expected ${expected}, actual ${actual} -- ${message}`);
+  process.stdout.write(`[pass] ${message}\n`);
+};
+
+// References
+const IPv4 = 0x0800;
+const b = (...a) => Buffer.from(a);
+
 // Build network
 const Alice   = new Meshy({ mdpInterval: 1e2 });
 const Bob     = new Meshy({ mdpInterval: 1e2 });
@@ -23,23 +32,46 @@ const con_cd = mockConnection();
 Charlie.addConnection(con_cd[0]);
 David.addConnection(con_cd[1]);
 
-Alice.declareService(0x0800, Buffer.from([192,168,1,10]))
-Bob.declareService(0x0800, Buffer.from([192,168,1,20]))
-Charlie.declareService(0x0800, Buffer.from([192,168,1,30]))
-David.declareService(0x0800, Buffer.from([192,168,1,40]))
+Alice.declareService(IPv4, Buffer.from([192,168,1,10]))
+Bob.declareService(IPv4, Buffer.from([192,168,1,20]))
+Charlie.declareService(IPv4, Buffer.from([192,168,1,30]))
+David.declareService(IPv4, Buffer.from([192,168,1,40]))
 
-setTimeout(() => {
-  console.log('Alice   -> Charlie', Alice.routeInfo(0x0800, Buffer.from([192,168,1,30])));
-  console.log('Charlie -> David  ', Charlie.routeInfo(0x0800, Buffer.from([192,168,1,40])));
-  console.log('Alice   -> David  ', Alice.routeInfo(0x0800, Buffer.from([192,168,1,40])));
-  console.log('');
-  console.log('David   -> Charlie', David.routeInfo(0x0800, Buffer.from([192,168,1,30])));
-  console.log('Charlie -> Alice  ', Charlie.routeInfo(0x0800, Buffer.from([192,168,1,10])));
-  console.log('David   -> Alice  ', David.routeInfo(0x0800, Buffer.from([192,168,1,10])));
+setTimeout(async () => {
+
+  const route_ac = Alice.routeInfo(IPv4, b(192,168,1,30));
+  assert(true, Buffer.isBuffer(route_ac), "Alice   -> Charlie route resolves");
+  // @ts-ignore
+  assert(0, Buffer.compare(route_ac, b(2,0)), 'Alice   -> Charlie routes without hops');
+
+  const route_cd = Charlie.routeInfo(IPv4, b(192,168,1,40));
+  assert(true, Buffer.isBuffer(route_cd), "Charlie -> David   route resolves");
+  // @ts-ignore
+  assert(0, Buffer.compare(route_cd, b(3,0)), 'Charlie -> David   routes without hops');
+
+  const route_ad = Alice.routeInfo(IPv4, b(192,168,1,40));
+  assert(true, Buffer.isBuffer(route_ad), "Alice   -> David   route resolves");
+  // @ts-ignore
+  assert(0, Buffer.compare(route_ad, b(2,3,0)), 'Alice   -> David   routes with hops');
+
+  const route_dc = David.routeInfo(IPv4, b(192,168,1,30));
+  assert(true, Buffer.isBuffer(route_dc), "David   -> Charlie route resolves");
+  // @ts-ignore
+  assert(0, Buffer.compare(route_dc, b(1,0)), 'David   -> Charlie routes without hops');
+
+  const route_ca = Charlie.routeInfo(IPv4, b(192,168,1,10));
+  assert(true, Buffer.isBuffer(route_ca), "Charlie -> Alice   route resolves");
+  // @ts-ignore
+  assert(0, Buffer.compare(route_ca, b(2,0)), 'Charlie -> Alice   routes without hops');
+
+  const route_da = David.routeInfo(IPv4, b(192,168,1,10));
+  assert(true, Buffer.isBuffer(route_da), "David   -> Alice   route resolves");
+  // @ts-ignore
+  assert(0, Buffer.compare(route_da, b(1,2,0)), 'David   -> Alice   routes with hops');
+
+  await new Promise(r => setTimeout(r, 100));
+  Alice.shutdown();
+  Bob.shutdown();
+  Charlie.shutdown();
+  David.shutdown();
 }, 500);
-
-// console.log({
-//   Alice,
-//   Bob,
-//   // Charlie,
-// });
