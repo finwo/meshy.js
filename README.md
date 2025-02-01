@@ -79,26 +79,26 @@ Meshy Discovery Protocol
 ------------------------
 
 The Meshy Discovery Protocol (MDP) is a push-based protocol, designed to
-distribute address and service information. For simplicity's sake, we'll refer
-to all records as services, although records may also signify just an address in
-a different protocol.
+distribute address and service information. Because the discovered names/labels
+etc can be addresses or even database keys, we chose to term "locator" to
+describe records within the MDP system.
 
-Periodically, a node will send out all services it supports, and optionally all
-services it knows about, towards it's direct neighbours in a single MDP packet.
-Because each record within a packet contains the return path towards the node
-that hosts it, records that originated from neighbours must have their paths
-updated.
+Periodically, a node will send out all locators it knows and hosts towards all
+connected neighbours in a single MDP packet. Because records within this packet
+contain the routing path towards the node that hosts the locator, any records
+forwarded from neighbours should have updated routing paths forwarded.
 
-Whenever receiving a packet, the node should record all services listed in the
-packet with the proper path towards the node hosting the service. Expired
-service entries should be discarded, services with the same path length but an
-expiry further in the future should override the old registration, and services
-with a path shorter than the known path should override the old registration.
+Whenever receiving an MDP packet, the node should record all locators listed in
+the packet with the proper routing path towards the node hosting the locator.
+Expired locator entries should be discarded, locators with the same routing path
+length but an expiry further in the future should override the old record, and
+locators with a routing path shorter than the known routing path should override
+the old record.
 
-If a node does not have enough memory or storage to keep track of all services
-on the network, it may choose to only keep track of protocols or services it's
-interested in. Other nodes will simple not route packets through the
-low-resource node for the services it discards.
+If a node does not have enough memory or storage to keep track of all locators
+on the network, it may choose to discard records for protocols it does not wish
+to participate in. This will result in that protocol not being routed over that
+node, as discovery stops at that node.
 
 A low-resource node may also choose to forward a path-updated version of the
 packet without delay and not track them, though connecting 2 nodes with this
@@ -116,15 +116,19 @@ an expiry of 1 second might be more appropriate.
 Within the packet, after the protocol field, the structure is intentionally kept
 simple and imposes as little restrictions as possible.
 
+For version 1 of the protocol, records longer than 2^16-1 bytes are not
+supported. Due to the structure, future versions should account for
+record-skipping if they will support records larger than this.
+
 | Field    | Type         | Description                                                                          |
 | -------- | ------------ | ------------------------------------------------------------------------------------ |
-| Size     | uint16be     | Length of the record, excluding the size field                                       |
+| Size     | uint16be     | Length of the record in bytes, excluding this size field                             |
 | Version  | uint16be     | 0x0001, Format version of the record                                                 |
-| Protocol | uint16be     | The protocol this service record applies to                                          |
+| Protocol | uint16be     | The protocol this locator record applies to                                          |
 | Expiry   | uint64be     | When this record expires in milliseconds since the UNIX epoch (1970-01-01 00:00 UTC) |
-| Path     | &lt;path&gt; | Path towards the node that is hosting the service                                    |
-| Length   | uint16be     | Length of the name in bytes                                                          |
-| Name     | string       | Name of the service described in this record                                         |
+| Path     | &lt;path&gt; | Path towards the node that is hosting the locator                                    |
+| Length   | uint16be     | Length of the value in bytes                                                         |
+| Value    | string       | Value of the described locator in this record                                        |
 
 Note that a size indicator of 0x0000 signals the end of the record list,
 regardless of whether there is more data within the packet.
@@ -159,39 +163,3 @@ forward it. In turn, that neighbour would send out that record as follows:
 00 04                   -- Address length = 4 bytes
 c0 a8 01 20             -- Address = 192.168.1.42
 ```
-
-<!--
-
-LLDP
-----
-
-Because LLDP specifications are hidden behind paywalls (hit me up if you have a
-shareable definition), we define a variant here that *hopefully* is compatible.
-
-This definition is mostly based on [the wikipedia
-page](https://en.wikipedia.org/wiki/Link_Layer_Discovery_Protocol) and guessing
-missing information.
-
-### Packet format
-
-After the protocol indicator, the packet contains a list of TLV entries up to
-the packet end OR an "end of lldpdu" record, whichever comes first.
-
-A TLV record consists of a 7-bit type indicator followed by a 9-bit length
-indicator. The registered types are as follows:
-
-| Type  | Usage     | Description         |
-| ----- | --------- | ------------------- |
-| 0     | Optional  | End of LLDPU        |
-| 1     | Mandatory | Chassis ID          |
-| 2     | Mandatory | Port ID             |
-| 3     | Mandatory | Time to live        |
-| 4     | Optional  | Port description    |
-| 5     | Optional  | System name         |
-| 6     | Optional  | System description  |
-| 7     | Optional  | System capabilities |
-| 8     | Optional  | Management address  |
-| 9-126 | Reserved  |                     |
-| 127   | Custom    |                     |
-
--->

@@ -1,20 +1,43 @@
 import mockConnection from './mockConnection';
-import Meshy from '../src';
+import Meshy, {MeshyProtocolHandler, MeshyProtocolHandlerFn} from '../src';
+
+class MockIPv4 implements MeshyProtocolHandler {
+  protocol: number = 0x0800;
+  locators: { expiry: bigint, value: Buffer }[] = [];
+  async onmessage() {}
+  async onclose() {}
+  constructor(ip: [number,number,number,number]) {
+    this.locators.push({ expiry: 10000n, value: Buffer.from(ip) });
+  }
+}
 
 const assert = (expected, actual, message) => {
   if (expected !== actual) throw new Error(`Expected ${expected}, actual ${actual} -- ${message}`);
   process.stdout.write(`[pass] ${message}\n`);
 };
 
-// References
+// // References
 const IPv4 = 0x0800;
 const b = (...a) => Buffer.from(a);
 
+
+// Network structure
+//
+// Alice ---- Charlie ---- David
+//    \         /
+//     -- Bob --
+
 // Build network
-const Alice   = new Meshy({ mdpInterval: 1e2 });
-const Bob     = new Meshy({ mdpInterval: 1e2 });
-const Charlie = new Meshy({ mdpInterval: 1e2 });
-const David   = new Meshy({ mdpInterval: 1e2 });
+const Alice   = new Meshy({ mdp: { interval: 1e2 } });
+const Bob     = new Meshy({ mdp: { interval: 1e2 } });
+const Charlie = new Meshy({ mdp: { interval: 1e2 } });
+const David   = new Meshy({ mdp: { interval: 1e2 } });
+
+// Setup IPv4 on the network
+Alice  .registerHandler(new MockIPv4([192,168,1,10]))
+Bob    .registerHandler(new MockIPv4([192,168,1,20]))
+Charlie.registerHandler(new MockIPv4([192,168,1,30]))
+David  .registerHandler(new MockIPv4([192,168,1,40]))
 
 const con_ab = mockConnection();
 Alice.addConnection(con_ab[0]);
@@ -32,14 +55,10 @@ const con_cd = mockConnection();
 Charlie.addConnection(con_cd[0]);
 David.addConnection(con_cd[1]);
 
-Alice.declareService(IPv4, Buffer.from([192,168,1,10]))
-Bob.declareService(IPv4, Buffer.from([192,168,1,20]))
-Charlie.declareService(IPv4, Buffer.from([192,168,1,30]))
-David.declareService(IPv4, Buffer.from([192,168,1,40]))
-
 setTimeout(async () => {
 
   const route_ac = Alice.routeInfo(IPv4, b(192,168,1,30));
+  console.log({ route_ac });
   assert(true, Buffer.isBuffer(route_ac), "Alice   -> Charlie route resolves");
   // @ts-ignore
   assert(0, Buffer.compare(route_ac, b(2,0)), 'Alice   -> Charlie routes without hops');

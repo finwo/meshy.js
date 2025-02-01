@@ -1,10 +1,22 @@
 import { isPacketConnection, isStreamConnection, PacketConnection, StreamConnection } from 'stream-packetize';
+import {num_to_ui16be, num_to_ui64be} from './numbers';
 
-type MeshyOptions = {
-  mdpInterval: number,
+export type MeshyProtocolHandlerFn = (meshy: Meshy, path:Buffer, payload:Buffer) => Promise<any>;
+
+export interface MeshyProtocolHandler {
+  protocol: number;
+  locators: { expiry: bigint, value: Buffer }[];
+  onmessage: MeshyProtocolHandlerFn;
+  onclose: (meshy:Meshy) => Promise<any>;
 };
 
-export type MeshyHandlerFn = (path:Buffer, payload:Buffer) => Promise<any>;
+export type MeshyOptions = {
+  mdp: false | MDPOptions;
+};
+
+export type MDPOptions = {
+  interval: number;
+};
 
 const privateData = new WeakMap<object, {
   connections: {
@@ -12,12 +24,8 @@ const privateData = new WeakMap<object, {
     path      : Buffer,
     connection: PacketConnection | WebSocket,
   }[],
-  handlers: {
-    protocol: number,
-    fn      : MeshyHandlerFn,
-  }[],
-  services: {
-    isSelf  : boolean,
+  handlers: MeshyProtocolHandler[],
+  locators: {
     path    : Buffer,
     expires : bigint,
     protocol: number,
@@ -25,58 +33,51 @@ const privateData = new WeakMap<object, {
   }[],
 }>();
 
-function num_to_ui16be(value: bigint | number) {
-  const output = Buffer.alloc(2);
-  output.writeUint16BE(Number(value));
-  return output;
-}
-function num_to_ui64be(value: bigint | number) {
-  const output = Buffer.alloc(8);
-  output.writeBigInt64BE(BigInt(value))
-  return output;
-}
-
-export class Meshy {
-  private opts: MeshyOptions;
-  private mdpInterval: NodeJS.Timeout;
-
-  constructor(options?: Partial<MeshyOptions>) {
-    // Mix in default options
-    this.opts = Object.assign({
-      mdpInterval: 1e3,
-    }, options);
-
-    // Ensure a context for truly private data exists
-    privateData.set(this, {
-      connections: [],
-      handlers: [],
-      services: [],
-    });
-    const ctx = privateData.get(this);
-
+export class MeshyDiscoveryProtocolHandler implements MeshyProtocolHandler {
+  interval: NodeJS.Timeout;
+  protocol: number = 0x0800;
+  locators: { expiry: bigint, value: Buffer }[] = [];
+  constructor(meshy: Meshy, private options: MDPOptions) {
+    // Share privateData
+    const ctx = privateData.get(meshy);
     // MDP sender + housekeeping
-    this.mdpInterval = setInterval(() => {
-      // Handle service expiry
-      const now    = BigInt(Date.now());
-      ctx.services = ctx.services.filter(service => {
-        if (service.isSelf) return true;
-        return service.expires >= now;
-      });
+    this.interval = setInterval(() => {
+      // Handle locator expiry
+      const now = BigInt(Date.now());
+      ctx.locators = ctx.locators.filter(locator => locator.expires >= now);
 
-      let   payload = Buffer.alloc(0);
-      const path       = Buffer.from([0]);
-      const returnPath = Buffer.from([0]);
-      const protocol   = 0x0100;
+      // Pre-build payload
+      const local = Buffer.from([0]);
+      let payload = Buffer.alloc(0);
 
-      for(const service of ctx.services) {
-        const expires = service.isSelf ? now + service.expires : service.expires;
+      // Append local locators
+      for(const handler of ctx.handlers) {
+        for(const locator of handler.locators) {
+          const record = Buffer.concat([
+            num_to_ui16be(1),                    // MDP version 1
+            num_to_ui16be(handler.protocol),     // Locator protocol
+            num_to_ui64be(now + locator.expiry), // Expiry timestamp
+            local,                               // Routing path
+            num_to_ui16be(locator.value.length), // Value length
+            locator.value,                       // Locator value
+          ]);
+          payload = Buffer.concat([
+            payload,
+            num_to_ui16be(record.length),
+            record,
+          ]);
+        }
+      }
+
+      // Forward remove locators
+      for(const locator of ctx.locators) {
         const record = Buffer.concat([
           num_to_ui16be(1),                    // MDP version 1
-          num_to_ui16be(service.protocol),     // Service protocol
-          num_to_ui64be(expires),              // Expiry timestamp
-          service.path,                        // Service path
-          num_to_ui16be(service.value.length), // Value length
-          service.value,                       // Value itself
+          num_to_ui16be(locator.protocol),     // Locator protocol
+          num_to_ui64be(locator.expires),      // Expiry timestamp
+          locator.path,                        // Routing path
+          num_to_ui16be(locator.value.length), // Value length
+          locator.value,                       // Locator value
         ]);
         payload = Buffer.concat([
           payload,
@@ -84,143 +85,184 @@ export class Meshy {
           record,
         ]);
       }
+
+      // Send to all neighbours
       for(const neighbour of ctx.connections) {
-        this.sendMessage(
-          Buffer.concat([Buffer.from([neighbour.port]),path]),
-          returnPath,
-          protocol,
-          payload,
-        );
+        meshy.sendMessage(neighbour.path, this.protocol, payload);
       }
-    }, this.opts.mdpInterval);
-
-    // MDP receiver
-    ctx.handlers.push({
-      protocol: 0x0100,
-      fn: async (returnPath: Buffer, payload: Buffer) => {
-        while(payload.length) {
-
-          // Shift the whole entry from the payload, so we can skip
-          const entryLength = payload.readUint16BE(0);
-          if (!entryLength) break; // 0 = end of list
-          let entry = payload.subarray(2, entryLength + 2);
-          payload = payload.subarray(entryLength + 2);
-
-          // Check entry compatibility
-          const version = entry.readUint16BE(0);
-          if (version !== 1) continue; // unsupported
-          entry = entry.subarray(2);
-
-          // Extract data
-          const protocol = entry.readUint16BE(0);
-          const expires  = entry.readBigInt64BE(2);
-          const path     = Buffer.concat([
-            returnPath.subarray(0, returnPath.length - 1),
-            entry.subarray(10, entry.indexOf(0, 10) + 1)
-          ]);
-          entry = entry.subarray(path.length - returnPath.length + 11);
-          const valueLength = entry.readUint16BE(0);
-          const value       = entry.subarray(2, 2 + valueLength);
-
-          // Received expired entry = skip
-          if (expires < BigInt(Date.now())) continue;
-
-          // Check if we already know the service
-          const found = ctx.services.find(service => {
-            if (service.protocol !== protocol) return false;
-            if (Buffer.compare(service.value, value)) return false;
-            return true;
-          });
-
-          // Skip if we ourselves host the service
-          // Reason: expires = duration, not timestamp
-          if (found && found.isSelf) continue;
-
-          if (found && (
-            ((found.expires > expires) && (found.path.length  > path.length)) ||
-            ((found.expires < expires) && (found.path.length >= path.length))
-          )) {
-            // Update if shorter path or newer record from same distance
-            found.expires = expires;
-            found.path    = path;
-          } else if (!found) {
-            // Or insert if new
-            ctx.services.push({
-              isSelf: false,
-              path,
-              expires,
-              protocol,
-              value,
-            });
-          }
-        }
-        return true;
-      },
-    });
-
+    }, options.interval);
   }
+  async onmessage(meshy: Meshy, returnPath: Buffer, payload: Buffer) {
+    const ctx = privateData.get(meshy);
 
-  // Note: targetpath is original, returnpath is already been prepended
-  private async _handleMessage(message: { returnPath: Buffer, protocol: number, payload: Buffer }) {
-    const ctx = privateData.get(this);
-    // TODO: message is for us, do stuff
-    const handlers = ctx.handlers.filter(entry => entry.protocol == message.protocol);
-    for(const handler of handlers) {
-      // return falsy = done, return truthy = pass to next handler
-      const done = !(await handler.fn(message.returnPath, message.payload));
-      if (done) break;
+    while(payload.length) {
+
+      // Shift the whole record from the payload
+      const recordLength = payload.readUint16BE(0);
+      if (!recordLength) break; // 0 = end of list
+      let record = payload.subarray(2, recordLength + 2);
+      payload = payload.subarray(recordLength + 2);
+
+      // Check record compatibility
+      const version = record.readUint16BE(0);
+      if (version !== 1) continue;
+      record = record.subarray(2);
+
+      // Extract data
+      const protocol = record.readUint16BE(0);
+      const expires  = record.readBigInt64BE(2);
+      const path     = Buffer.concat([
+        returnPath.subarray(0, returnPath.length - 1),
+        record.subarray(10, record.indexOf(0, 10) + 1),
+      ]);
+      record = record.subarray(path.length - returnPath.length + 11);
+      const valueLength = record.readUint16BE(0);
+      const value       = record.subarray(2, 2 + valueLength);
+
+      // Expired record = skip
+      if (expires < BigInt(Date.now())) continue;
+
+      // Self-hosted service = skip
+      if (ctx.handlers.find(handler => handler.locators.find(locator => Buffer.compare(locator.value, value) === 0))) {
+        continue;
+      }
+
+      // Fetch already-known locator
+      const found = ctx.locators.find(locator => {
+        if (locator.protocol !== protocol) return false;
+        return Buffer.compare(value, locator.value) === 0;
+      });
+
+      if (found && (
+        ((found.expires > expires) && (found.path.length  > path.length)) ||
+        ((found.expires < expires) && (found.path.length >= path.length))
+      )) {
+        // Update pre-existing record if it's better
+        found.expires = expires;
+        found.path    = path;
+      } else if (!found) {
+        // Or insert if new
+        ctx.locators.push({
+          path,
+          expires,
+          protocol,
+          value,
+        });
+      }
     }
-    // If a message has no handler, we don't support it
-    // We don't care about unsupported messages, so we drop them silently
+
+  }
+  async onclose(meshy: Meshy) {
+    const ctx = privateData.get(meshy);
+    ctx.locators = [];
+    clearInterval(this.interval);
+  }
+}
+
+
+export class Meshy {
+  private opts: MeshyOptions;
+  private mdp: false | MeshyDiscoveryProtocolHandler;
+  constructor(options?: Partial<MeshyOptions>) {
+
+    // Mix in default options
+    this.opts = Object.assign({
+      mdp: {
+        interval: 1000,
+      },
+    }, options);
+
+    // Ensure a context for truly private data exists
+    privateData.set(this, {
+      connections: [],
+      handlers: [],
+      locators: [],
+    });
+    const ctx = privateData.get(this);
+
+    // Start MDP handler if requested to
+    if (this.opts.mdp) {
+      this.mdp = new MeshyDiscoveryProtocolHandler(this, this.opts.mdp);
+      ctx.handlers.push(this.mdp);
+    }
   }
 
-  routeInfo(protocol: number, service: Buffer) {
+  routeInfo(protocol: number, locator: Buffer) {
     const ctx = privateData.get(this);
-    const found = ctx.services.find(svc => {
-      if (svc.protocol !== protocol) return false;
-      if (Buffer.compare(svc.value, service)) return false;
-      return true;
+    const found = ctx.locators.find(l => {
+      if (l.protocol !== protocol) return false;
+      return Buffer.compare(l.value, locator) === 0;
     });
     if (!found) return false;
     return found.path;
   }
 
-  async sendMessage(path: Buffer, returnPath: Buffer, protocol: number, payload: Buffer): Promise<boolean> {
-    if (path[0] == 0) { // Message to self
-      setImmediate(() => {
-        this._handleMessage({
-          returnPath: Buffer.from([0]),
-          protocol,
-          payload
-        });
-      });
+  async sendMessage(path: Buffer, protocol: number, payload: Buffer, returnPath?: Buffer): Promise<boolean> {
+    if (!path.length) return false;
+
+    // Handle message to self
+    if (path[0] === 0) {
+      const prefix = Buffer.alloc(4).fill(0);
+      prefix.writeUInt16BE(protocol, 2);
+      setImmediate(() => this._handleMessage(-1, Buffer.concat([prefix,payload])));
       return true;
     }
+
+    // Sanity checking
+    if (!returnPath) returnPath = Buffer.from([0]);
+    if (returnPath.length < 1) returnPath = Buffer.from([0]);
     if (path.length < 2) return false;
     if (path[path.length - 1] !== 0) return false;
-    if (returnPath.length < 1) returnPath = Buffer.from([0]);
-    const ctx       = privateData.get(this);
+    if (returnPath[returnPath.length - 1] !== 0) return false;
+
+    // And actually send to the neighbour
+    const ctx = privateData.get(this);
     const neighbour = ctx.connections.find(entry => entry.port == path[0]);
     if (!neighbour) return false;
-    neighbour.connection.send(Buffer.concat([
+    const message = Buffer.concat([
       path.subarray(1),
       returnPath,
-      Buffer.from([ (protocol >> 8) % 256, protocol % 256 ]),
+      num_to_ui16be(protocol),
       payload,
-    ]));
+    ]);
+    neighbour.connection.send(message);
     return true;
   }
 
-  // TODO: something to remove this declaration
-  declareService(protocol: number, value: Buffer, expiry: bigint | number = 60e3) {
+  private async _handleMessage(port: number, message: string|Buffer) {
     const ctx  = privateData.get(this);
-    ctx.services.push({
-      isSelf  : true,
-      path    : Buffer.from([0]),
-      expires : BigInt(expiry),
-      protocol: protocol,
-      value   : value,
-    });
+    if ('string' === typeof message) message = Buffer.from(message);
+
+    // Split paths and payload
+    // !!! MODIFIES RETURN PATH !!!
+    const targetPath = message.subarray(0, message.indexOf(0) + 1);
+    const returnPath = Buffer.concat([
+      Buffer.from(port === -1 ? [] : [port]),
+      message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1),
+    ]);
+    const payload = message.subarray(targetPath.length + returnPath.length - 1);
+
+    // Handle messages for us, process the thing
+    if (targetPath[0] == 0) {
+      let handled = false;
+      const protocol = payload.readUint16BE(0);
+      const content  = payload.subarray(2);
+      for(const protocolHandler of ctx.handlers) {
+        if (protocolHandler.protocol !== protocol) continue;
+        handled = !(await protocolHandler.onmessage(this, returnPath, content));
+        if (handled) break;
+      }
+      return;
+    }
+
+    // Forward packet if not for us
+    const neighbour = ctx.connections.find(entry => entry.port == targetPath[0]);
+    if (!neighbour) return; // Discard packet if target missing
+    neighbour.connection.send(Buffer.concat([
+      targetPath.subarray(1),
+      returnPath,
+      payload,
+    ]));
   }
 
   /**
@@ -240,7 +282,6 @@ export class Meshy {
     }
 
     // Reserve a unique port number
-    // TODO: optimize?
     let port = 1;
     while(ctx.connections.find(entry => entry.port === port)) {
       port++;
@@ -256,36 +297,7 @@ export class Meshy {
     }
 
     // Handle incoming packets
-    onMessage((message: string|Buffer) => {
-      if ('string' === typeof message) message = Buffer.from(message);
-
-      // Split paths and payload
-      // !!! MODIFIES RETURN PATH !!!
-      const targetPath = message.subarray(0, message.indexOf(0) + 1);
-      const returnPath = Buffer.concat([
-        Buffer.from([port]),
-        message.subarray(targetPath.length, message.indexOf(0, targetPath.length) + 1),
-      ]);
-      const payload = message.subarray(targetPath.length + returnPath.length - 1);
-
-      // Handle messages for us, process the thing
-      if (targetPath[0] == 0) {
-        return this._handleMessage({
-          returnPath,
-          protocol: payload.readUint16BE(0),
-          payload : payload.subarray(2)
-        });
-      }
-
-      // Forward packet if not for us
-      const neighbour = ctx.connections.find(entry => entry.port == targetPath[0]);
-      if (!neighbour) return; // Discard packet if target missing
-      neighbour.connection.send(Buffer.concat([
-        targetPath.subarray(1),
-        returnPath,
-        payload,
-      ]));
-    });
+    onMessage(async (message: string|Buffer) => this._handleMessage(port, message));
 
     // Handle closures
     // TODO: do anything special?
@@ -303,12 +315,22 @@ export class Meshy {
     return false;
   }
 
-  shutdown() {
-    const ctx = privateData.get(this);
-    ctx.connections.forEach(neighbour => {
-      neighbour.connection.close();
-    });
-    clearInterval(this.mdpInterval);
+  registerHandler(handler: MeshyProtocolHandler) {
+    const ctx  = privateData.get(this);
+    ctx.handlers.push(handler);
+  }
+
+  removeHandler(subject: MeshyProtocolHandler) {
+    const ctx  = privateData.get(this);
+    ctx.handlers = ctx.handlers.filter(handler => handler !== subject);
+  }
+
+  async shutdown() {
+    const ctx        = privateData.get(this);
+    const handlers   = ctx.handlers;
+    const neighbours = ctx.connections;
+    for(const handler   of handlers  ) await handler.onclose(this);
+    for(const neighbour of neighbours) await neighbour.connection.close();
   }
 
 }
