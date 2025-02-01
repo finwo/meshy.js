@@ -100,7 +100,7 @@ export class Meshy {
     // MDP receiver
     ctx.handlers.push({
       protocol: 0x0100,
-      fn: async (returnPath: Buffer, port: number, payload: Buffer) => {
+      fn: async (_: Buffer, port: number, payload: Buffer) => {
         while(payload.length) {
 
           // Shift the whole entry from the payload, so we can skip
