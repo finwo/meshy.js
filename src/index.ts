@@ -94,7 +94,6 @@ export class Meshy {
           payload,
         );
       }
-      console.log(payload.toString('hex'));
     }, this.opts.mdpInterval);
 
     // MDP receiver
@@ -177,7 +176,27 @@ export class Meshy {
     // We don't care about unsupported messages, so we drop them silently
   }
 
+  async routeInfo(protocol: number, service: Buffer) {
+    const ctx = privateData.get(this);
+    const found = ctx.services.find(svc => {
+      if (svc.protocol !== protocol) return false;
+      if (Buffer.compare(svc.value, service)) return false;
+      return true;
+    });
+    if (!found) return false;
+    return {
+      port: found.port,
+      path: found.path,
+    };
+  }
+
   async sendMessage(port: number, path: Buffer, returnPath: Buffer, protocol: number, payload: Buffer): Promise<boolean> {
+    if (!port) { // Message to self
+      setImmediate(() => {
+        this._handleMessage({ returnPath, port, protocol, payload })
+      });
+      return true;
+    }
     if (path[path.length - 1] !== 0) return false;
     const ctx       = privateData.get(this);
     const neighbour = ctx.connections.find(entry => entry.port == port);
