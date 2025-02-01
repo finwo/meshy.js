@@ -96,10 +96,14 @@ expiry further in the future should override the old registration, and services
 with a path shorter than the known path should override the old registration.
 
 If a node does not have enough memory or storage to keep track of all services
-on the network, it may choose to forward a path-updated version of the packet
-without delay. It should be noted that connecting 2 nodes together with this
-behavior will cause the packet to be sent back-and-forth and grow the paths
-listed within the records of that packet.
+on the network, it may choose to only keep track of protocols or services it's
+interested in. Other nodes will simple not route packets through the
+low-resource node for the services it discards.
+
+A low-resource node may also choose to forward a path-updated version of the
+packet without delay and not track them, though connecting 2 nodes with this
+behavior together will cause the packet to bounce between them with increasing
+size.
 
 The interval between the periodic packets should be determined by the network
 operator. In slow-moving environments a 1-hour interval with expiries measured
@@ -109,11 +113,12 @@ an expiry of 1 second might be more appropriate.
 
 #### Packet structure
 
-Within the packet, after the protocol field, there is simply a list of 5-value
-records. These values are:
+Within the packet, after the protocol field, the structure is intentionally kept
+simple and imposes as little restrictions as possible.
 
 | Field    | Type         | Description                                                                          |
 | -------- | ------------ | ------------------------------------------------------------------------------------ |
+| Size     | uint16be     | Length of the record, excluding the size field                                       |
 | Version  | uint16be     | 0x0001, Format version of the record                                                 |
 | Protocol | uint16be     | The protocol this service record applies to                                          |
 | Expiry   | uint64be     | When this record expires in milliseconds since the UNIX epoch (1970-01-01 00:00 UTC) |
@@ -121,7 +126,7 @@ records. These values are:
 | Length   | uint16be     | Length of the name in bytes                                                          |
 | Name     | string       | Name of the service described in this record                                         |
 
-Note that a version indicator of 0x0000 signals the end of the record list,
+Note that a size indicator of 0x0000 signals the end of the record list,
 regardless of whether there is more data within the packet.
 
 #### IPv4 Example
@@ -133,6 +138,7 @@ notifying their neighbours, which in turn would propagate the address further.
 Such a record may look like this:
 
 ```
+00 13                   -- Entry contains 19 more bytes
 00 01                   -- MDP version 1
 08 00                   -- Protocol IPv4
 00 00 01 94 1f 29 7c 00 -- 1735689600000, expires on 2025-01-01 00:00:00 GMT
@@ -145,6 +151,7 @@ Let's say it's neighbour receives this packet on connection 20 and wants to
 forward it. In turn, that neighbour would send out that record as follows:
 
 ```
+00 14                   -- Entry contains 20 more bytes
 00 01                   -- MDP version 1
 08 00                   -- Protocol IPv4
 00 00 01 94 1f 29 7c 00 -- 1735689600000, expires on 2025-01-01 00:00:00 GMT

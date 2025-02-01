@@ -17,7 +17,7 @@ const { dtsPlugin } = require('esbuild-plugin-d.ts');
   const options = {
     bundle: false,
     outdir,
-    target: 'es2018',
+    target: tsconfig.compilerOptions.target,
     platform: 'node',
     format: 'cjs',
     sourcemap: tsconfig.compilerOptions.sourceMap,

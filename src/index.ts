@@ -1,7 +1,7 @@
 import { isPacketConnection, isStreamConnection, PacketConnection, StreamConnection } from 'stream-packetize';
 
 type MeshyOptions = {
-
+  mdpInterval: number,
 };
 
 export type MeshyHandlerFn = (path:Buffer, port:number, payload:Buffer) => Promise<any>;
@@ -15,21 +15,150 @@ const privateData = new WeakMap<object, {
     protocol: number,
     fn      : MeshyHandlerFn,
   }[],
+  services: {
+    port    : number,
+    path    : Buffer,
+    expires : bigint,
+    protocol: number,
+    value   : Buffer,
+  }[],
 }>();
+
+function num_to_ui16be(value: bigint | number) {
+  const output = Buffer.alloc(2);
+  output.writeUint16BE(Number(value));
+  return output;
+}
+function num_to_ui64be(value: bigint | number) {
+  const output = Buffer.alloc(8);
+  output.writeBigInt64BE(BigInt(value))
+  return output;
+}
 
 export class Meshy {
   private opts: MeshyOptions;
+  private mdpInterval: NodeJS.Timeout;
 
   constructor(options?: Partial<MeshyOptions>) {
 
     // Mix in default options
     this.opts = Object.assign({
+      mdpInterval: 1e3,
     }, options);
 
     // Ensure a context for truly private data exists
     privateData.set(this, {
       connections: [],
       handlers: [],
+      services: [],
+    });
+    const ctx = privateData.get(this);
+
+    // MDP sender + housekeeping
+    this.mdpInterval = setInterval(() => {
+
+      // Handle service expiry
+      const now    = BigInt(Date.now());
+      ctx.services = ctx.services.filter(service => {
+        if (service.port === 0) return true; // Self-declared
+        return service.expires >= now;
+      });
+
+      let   payload = Buffer.alloc(0);
+      const path       = Buffer.from([0]);
+      const returnPath = Buffer.from([0]);
+      const protocol   = 0x0100;
+      for(const service of ctx.services) {
+        const expires = service.port ? service.expires : now + service.expires;
+        if (expires < now) continue;
+        const record = Buffer.concat([
+          num_to_ui16be(1),                          // MDP version 1
+          num_to_ui16be(service.protocol),           // Service protocol
+          num_to_ui64be(expires),                    // Expiry timestamp
+          Buffer.from([service.port]), service.path, // Service path
+          num_to_ui16be(service.value.length),       // Value length
+          service.value,                             // Value itself
+        ]);
+        payload = Buffer.concat([
+          payload,
+          num_to_ui16be(record.length),
+          record,
+        ]);
+      }
+      for(const neighbour of ctx.connections) {
+        this.sendMessage(
+          neighbour.port,
+          path,
+          returnPath,
+          protocol,
+          payload,
+        );
+      }
+      console.log(payload.toString('hex'));
+    }, this.opts.mdpInterval);
+
+    // MDP receiver
+    ctx.handlers.push({
+      protocol: 0x0100,
+      fn: async (returnPath: Buffer, port: number, payload: Buffer) => {
+        while(payload.length) {
+
+          // Shift the whole entry from the payload, so we can skip
+          const entryLength = payload.readUint16BE(0);
+          if (!entryLength) break; // 0 = end of list
+          let entry = payload.subarray(2, entryLength + 2);
+          payload = payload.subarray(entryLength + 2);
+
+          // Check entry compatibility
+          const version = entry.readUint16BE(0);
+          if (version !== 1) continue; // unsupported
+          entry = entry.subarray(2);
+
+          // Extract data
+          const protocol = entry.readUint16BE(0);
+          const expires  = entry.readBigInt64BE(2);
+          const path     = Buffer.concat([
+            entry.subarray(10, entry.indexOf(0, 10) + 1)
+          ]);
+          entry = entry.subarray(path.length + 10);
+          const valueLength = entry.readUint16BE(0);
+          const value       = entry.subarray(2, 2 + valueLength);
+
+          // Received expired entry = skip
+          if (expires < BigInt(Date.now())) continue;
+
+          // Check if we already know the service
+          const found = ctx.services.find(service => {
+            if (service.protocol !== protocol) return false;
+            if (Buffer.compare(service.value, value)) return false;
+            return true;
+          });
+
+          // Skip if we ourselves host the service
+          // Reason: expires = duration, not timestamp
+          if (found && (found.port === 0)) continue;
+
+          if (found && (
+            ((found.expires > expires) && (found.path.length  > path.length)) ||
+            ((found.expires < expires) && (found.path.length >= path.length))
+          )) {
+            // Update if shorter path or newer record from same distance
+            found.expires = expires;
+            found.path    = path;
+            found.port    = port;
+          } else if (!found) {
+            // Or insert if new
+            ctx.services.push({
+              port,
+              path,
+              expires,
+              protocol,
+              value,
+            });
+          }
+        }
+        return true;
+      },
     });
 
   }
@@ -40,6 +169,7 @@ export class Meshy {
     // TODO: message is for us, do stuff
     const handlers = ctx.handlers.filter(entry => entry.protocol == message.protocol);
     for(const handler of handlers) {
+      // return falsy = done, return truthy = pass to next handler
       const done = !(await handler.fn(message.returnPath, message.port, message.payload));
       if (done) break;
     }
@@ -61,15 +191,25 @@ export class Meshy {
     return true;
   }
 
+  // TODO: something to remove this declaration
+  declareService(protocol: number, value: Buffer, expiry: bigint | number = 60e3) {
+    const ctx  = privateData.get(this);
+    ctx.services.push({
+      port    : 0,
+      path    : Buffer.alloc(0),
+      expires : BigInt(expiry),
+      protocol: protocol,
+      value   : value,
+    });
+  }
+
   /**
-   * @param   {StreamConnection|PacketConnection} connection - The connection to manage using meshy
+   * @param   {StreamConnection|PacketConnection|WebSocket} connection - The connection to manage using meshy
    * @returns {Error|false} False on success, an error upon failure
    */
-  addConnection(connection: StreamConnection | PacketConnection): Error|false {
+  addConnection(connection: StreamConnection | PacketConnection | WebSocket): Error|false {
     if (isStreamConnection(connection)) connection = new PacketConnection(connection);
-
-    // @ts-ignore THIS IS THE LINE THAT CHECKS IT, SHUT UP
-    if (!(isPacketConnection(connection) || (connection instanceof WebSocket))) {
+    if (!(isPacketConnection(connection)) || (connection instanceof WebSocket)) {
       return new Error(`Given incompatible connection`);
     }
 
@@ -86,8 +226,17 @@ export class Meshy {
       port++;
     }
 
+    function onMessage(handler) {
+      if (isPacketConnection(connection)) return connection.on('message', handler);
+      if (connection instanceof WebSocket) return connection.onmessage(handler);
+    }
+    function onClose(handler) {
+      if (isPacketConnection(connection)) return connection.on('close', handler);
+      if (connection instanceof WebSocket) return connection.onclose(handler);
+    }
+
     // Handle incoming packets
-    connection.on('message', (message: string|Buffer) => {
+    onMessage((message: string|Buffer) => {
       if ('string' === typeof message) message = Buffer.from(message);
 
       // Split paths and payload
@@ -118,7 +267,7 @@ export class Meshy {
 
     // Handle closures
     // TODO: do anything special?
-    connection.on('close', () => {
+    onClose(() => {
       ctx.connections = ctx.connections.filter(entry => entry.port !== port);
     });
 
@@ -134,5 +283,3 @@ export class Meshy {
 }
 
 export default Meshy;
-
-console.log(new Meshy());
