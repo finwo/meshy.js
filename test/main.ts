@@ -58,7 +58,6 @@ David.addConnection(con_cd[1]);
 setTimeout(async () => {
 
   const route_ac = Alice.routeInfo(IPv4, b(192,168,1,30));
-  console.log({ route_ac });
   assert(true, Buffer.isBuffer(route_ac), "Alice   -> Charlie route resolves");
   // @ts-ignore
   assert(0, Buffer.compare(route_ac, b(2,0)), 'Alice   -> Charlie routes without hops');
