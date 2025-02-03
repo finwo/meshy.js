@@ -66,7 +66,7 @@ the ethertype protocol numbers as well. Because we do not support these 2 bytes
 as a packet-length indicator, we can re-use values &lt;1500 as custom protocols
 that are specific to meshy.
 
-Here's a list of custom protocols we define outside of the ethertype set.
+Here's a non-exhaustive list of protocols we define or recognize:
 
 | Hex  | Description                 |
 | ---- | --------------------------- |
