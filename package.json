@@ -1,7 +1,7 @@
 {
   "name": "meshy",
   "version": "0.1.1",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
     "build": "node build.js",
     "test": "npx -y ts-node test/main.ts"
