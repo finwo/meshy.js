@@ -37,7 +37,8 @@ export class MeshyDiscoveryProtocolHandler implements MeshyProtocolHandler {
   interval: NodeJS.Timeout;
   protocol: number = 0x0800;
   locators: { expiry: bigint, value: Buffer }[] = [];
-  constructor(meshy: Meshy, private options: MDPOptions) {
+
+  constructor(meshy: Meshy, options: MDPOptions) {
     // Share privateData
     const ctx = privateData.get(meshy);
     // MDP sender + housekeeping
