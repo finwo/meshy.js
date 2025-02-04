@@ -1,5 +1,5 @@
 import mockConnection from './mockConnection';
-import Meshy, {MeshyProtocolHandler, MeshyProtocolHandlerFn} from '../src';
+import Meshy, {MeshyProtocolHandler} from '../src';
 
 class MockIPv4 implements MeshyProtocolHandler {
   protocol: number = 0x0800;
