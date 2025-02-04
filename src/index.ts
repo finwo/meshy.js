@@ -1,12 +1,10 @@
 import { isPacketConnection, isStreamConnection, PacketConnection, StreamConnection } from 'stream-packetize';
 import {num_to_ui16be, num_to_ui64be} from './numbers';
 
-export type MeshyProtocolHandlerFn = (meshy: Meshy, path:Buffer, payload:Buffer) => Promise<any>;
-
 export interface MeshyProtocolHandler {
   protocol: number;
   locators: { expiry: bigint, value: Buffer }[];
-  onmessage: MeshyProtocolHandlerFn;
+  onmessage: (meshy: Meshy, path:Buffer, payload:Buffer) => Promise<any>;
   onclose: (meshy:Meshy) => Promise<any>;
 };
 
@@ -33,12 +31,18 @@ const privateData = new WeakMap<object, {
   }[],
 }>();
 
+export type ProtocolHandlerLocator = {
+  expiry: bigint;
+  value: Buffer;
+}
+
 export class MeshyDiscoveryProtocolHandler implements MeshyProtocolHandler {
   interval: NodeJS.Timeout;
   protocol: number = 0x0800;
-  locators: { expiry: bigint, value: Buffer }[] = [];
+  locators: ProtocolHandlerLocator[] = [];
 
   constructor(meshy: Meshy, options: MDPOptions) {
+
     // Share privateData
     const ctx = privateData.get(meshy);
     // MDP sender + housekeeping

@@ -7,9 +7,19 @@
     "test": "npx -y ts-node test/main.ts"
   },
   "keywords": [],
-  "author": "",
-  "license": "MIT",
+  "author": "Yersa Nordman <finwo@pm.me>",
+  "license": "MIT-0",
   "description": "Message router for sparsely connected mesh networks",
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/finwo/meshy.js.git"
+  },
+  "funding": "https://github.com/sponsors/finwo",
   "devDependencies": {
     "@types/node": "^22.10.5",
     "esbuild": "^0.24.2",
