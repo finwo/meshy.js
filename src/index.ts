@@ -4,6 +4,7 @@ import {num_to_ui16be, num_to_ui64be} from './numbers';
 export interface MeshyProtocolHandler {
   protocol: number;
   locators: { expiry: bigint, value: Buffer }[];
+  mdpFilter: (locator: Buffer) => boolean;
   onmessage: (meshy: Meshy, path:Buffer, payload:Buffer) => Promise<any>;
   onclose: (meshy:Meshy) => Promise<any>;
 };
@@ -14,6 +15,7 @@ export type MeshyOptions = {
 
 export type MDPOptions = {
   interval: number;
+  forwardAll?: boolean;
 };
 
 const privateData = new WeakMap<object, {
@@ -41,7 +43,10 @@ export class MeshyDiscoveryProtocolHandler implements MeshyProtocolHandler {
   protocol: number = 0x0800;
   locators: ProtocolHandlerLocator[] = [];
 
-  constructor(meshy: Meshy, options: MDPOptions) {
+  // MDP has no locators itself
+  mdpFilter = () => false;
+
+  constructor(meshy: Meshy, private options: MDPOptions) {
 
     // Share privateData
     const ctx = privateData.get(meshy);
@@ -127,22 +132,29 @@ export class MeshyDiscoveryProtocolHandler implements MeshyProtocolHandler {
       // Expired record = skip
       if (expires < BigInt(Date.now())) continue;
 
+      // Filter down handlers to a shortlist
+      const handlers = ctx.handlers.filter(handler => handler.protocol === protocol);
+
       // Self-hosted service = skip
-      if (ctx.handlers.find(handler => handler.locators.find(locator => Buffer.compare(locator.value, value) === 0))) {
+      if (handlers.find(handler => handler.locators.find(locator => Buffer.compare(locator.value, value) === 0))) {
         continue;
       }
 
-      // Fetch already-known locator
-      const found = ctx.locators.find(locator => {
-        if (locator.protocol !== protocol) return false;
-        return Buffer.compare(value, locator.value) === 0;
-      });
+      // Only participate according to protocol implementations
+      if (!this.options.forwardAll) {
+        const allowed = handlers.find(handler => {
+          if ('function' !== typeof handler.mdpFilter) return false;
+          return handler.mdpFilter(value);
+        });
+        if (!allowed) continue;
+      }
 
-      if (found && (
-        ((found.expires > expires) && (found.path.length  > path.length)) ||
-        ((found.expires < expires) && (found.path.length >= path.length))
-      )) {
-        // Update pre-existing record if it's better
+      // Fetch already-known locator
+      const found = ctx.locators.find(locator => Buffer.compare(value, locator.value) === 0);
+
+      if (found && (expires > found.expires)) {
+        // Update pre-existing record if it's valid longer
+        // Skip path length check, as a longer path might be faster
         found.expires = expires;
         found.path    = path;
       } else if (!found) {
@@ -174,6 +186,7 @@ export class Meshy {
     this.opts = Object.assign({
       mdp: {
         interval: 1000,
+        forwardAll: false,
       },
     }, options);
 

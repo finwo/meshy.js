@@ -6,6 +6,7 @@ class MockIPv4 implements MeshyProtocolHandler {
   locators: { expiry: bigint, value: Buffer }[] = [];
   async onmessage() {}
   async onclose() {}
+  mdpFilter = () => true;
   constructor(ip: [number,number,number,number]) {
     this.locators.push({ expiry: 10000n, value: Buffer.from(ip) });
   }
