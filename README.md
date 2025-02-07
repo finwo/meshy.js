@@ -44,7 +44,7 @@ aesServer.on('connection', sock => {
 While in theory you could send data into the network, and even find routing info using the
 `.routeInfo(protocol,locator)` method, meshy is not designed to be used as-is.
 
-Instead, meshy is designed to be analogous to something like ethernet in the OSI layer model.
+Instead, meshy is designed to behave like a layer 2 protocol (regardless of whether it runs on serial or over tcp).
 
 Take a look into [meshy-ipv4](https://npmjs.com/package/meshy-ipv4) if you want to send data across a meshy network in
 IPv4 format.
